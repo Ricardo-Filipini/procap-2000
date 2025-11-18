@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './services/supabaseClient';
-import { Question, User } from './types';
+import { Question, User, QuestionNotebook } from './types';
 import QuestionCard from './components/QuestionCard';
 import LoadingSpinner from './components/LoadingSpinner';
 import Login from './components/Login';
 import Sidebar from './components/Sidebar';
 import Leaderboard from './components/Leaderboard';
+import StudySetup from './components/StudySetup';
 import { MenuIcon } from './components/Icons';
 
 const App: React.FC = () => {
@@ -15,12 +16,13 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState('study'); // study, leaderboard
 
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [notebooks, setNotebooks] = useState<QuestionNotebook[]>([]);
+  const [studySessionActive, setStudySessionActive] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
   
-  // Restore session
   useEffect(() => {
     const savedUser = localStorage.getItem('procap_user');
     if (savedUser) {
@@ -38,39 +40,98 @@ const App: React.FC = () => {
     localStorage.removeItem('procap_user');
     setUser(null);
     setCurrentView('study');
+    setStudySessionActive(false);
   };
 
-  const fetchQuestions = useCallback(async () => {
+  const fetchNotebooks = useCallback(async () => {
     setLoading(true);
-    setCompleted(false);
-    setCurrentIndex(0);
     setError(null);
     try {
       const { data, error } = await supabase
-        .from('questions')
-        .select('*')
-        .limit(5);
+        .from('question_notebooks')
+        .select('id, name, question_ids');
       
       if (error) throw error;
-      if (data) setQuestions(data);
+      if (data) setNotebooks(data);
 
     } catch (err: any) {
-      setError(err.message || 'Falha ao buscar questões.');
+      setError(err.message || 'Falha ao buscar cadernos.');
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (user && currentView === 'study') {
-      fetchQuestions();
+    if (user && currentView === 'study' && !studySessionActive) {
+      fetchNotebooks();
     }
-  }, [user, currentView, fetchQuestions]);
+  }, [user, currentView, studySessionActive, fetchNotebooks]);
+
+  const handleStartRandomBlock = async (count: number) => {
+    setLoading(true);
+    setError(null);
+    setCompleted(false);
+    setCurrentIndex(0);
+    try {
+        const { data, error } = await supabase.rpc('get_random_questions', { num_questions: count });
+        if (error) throw error;
+        setQuestions(data || []);
+        setStudySessionActive(true);
+    } catch (err: any) {
+        setError(err.message || 'Falha ao buscar questões aleatórias.');
+        setStudySessionActive(false);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const handleStartNotebook = async (notebookId: string) => {
+    setLoading(true);
+    setError(null);
+    setCompleted(false);
+    setCurrentIndex(0);
+    try {
+        const { data: notebookData, error: notebookError } = await supabase
+            .from('question_notebooks')
+            .select('question_ids')
+            .eq('id', notebookId)
+            .single();
+
+        if (notebookError || !notebookData || !notebookData.question_ids || notebookData.question_ids.length === 0) {
+            throw new Error('Caderno não encontrado ou está vazio.');
+        }
+
+        const questionIds = notebookData.question_ids;
+        const { data, error } = await supabase
+            .from('questions')
+            .select('*')
+            .in('id', questionIds);
+        
+        if (error) throw error;
+
+        const orderedQuestions = questionIds
+            .map(id => data.find(q => q.id === id))
+            .filter((q): q is Question => Boolean(q));
+        
+        setQuestions(orderedQuestions);
+        setStudySessionActive(true);
+    } catch (err: any) {
+        setError(err.message || 'Falha ao iniciar o caderno.');
+        setStudySessionActive(false);
+    } finally {
+        setLoading(false);
+    }
+  };
+  
+  const handleFinishBlock = () => {
+      setCompleted(false);
+      setStudySessionActive(false);
+      setQuestions([]);
+      setCurrentIndex(0);
+  };
 
   const handleAnswer = async (questionId: string, isCorrect: boolean) => {
     if (!user) return;
-
-    // We only care about the first try for the leaderboard
     const { data: existingAnswer } = await supabase
         .from('user_question_answers')
         .select('id')
@@ -78,9 +139,7 @@ const App: React.FC = () => {
         .eq('question_id', questionId)
         .eq('notebook_id', 'all_questions')
         .single();
-    
-    if (existingAnswer) return; // Already answered
-
+    if (existingAnswer) return;
     await supabase.from('user_question_answers').insert({
       user_id: user.id,
       question_id: questionId,
@@ -106,16 +165,21 @@ const App: React.FC = () => {
   const renderStudyContent = () => {
     if (loading) return <LoadingSpinner />;
     if (error) return <div className="text-center text-red-500">{error}</div>;
+
+    if (!studySessionActive) {
+        return <StudySetup notebooks={notebooks} onStartRandom={handleStartRandomBlock} onStartNotebook={handleStartNotebook} />;
+    }
+
     if (completed) {
         return (
             <div className="text-center bg-white dark:bg-gray-800/50 backdrop-blur-sm p-10 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700">
                 <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-4">Parabéns!</h2>
                 <p className="text-lg text-gray-600 dark:text-gray-300 mb-8">Você completou este bloco de estudos.</p>
                 <button 
-                    onClick={fetchQuestions}
+                    onClick={handleFinishBlock}
                     className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
                 >
-                    Começar um Novo Bloco
+                    Voltar à Seleção
                 </button>
             </div>
         )
@@ -159,7 +223,7 @@ const App: React.FC = () => {
               <MenuIcon className="h-6 w-6" />
            </button>
            <h1 className="ml-4 text-xl font-semibold">
-              {currentView === 'study' ? 'Estudo: Todas as Questões' : 'Leaderboard Geral'}
+              {currentView === 'leaderboard' ? 'Leaderboard Geral' : 'Seleção de Estudo'}
            </h1>
         </header>
         <main className="flex-grow p-4 sm:p-6 md:p-8 flex items-center justify-center">

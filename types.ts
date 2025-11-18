@@ -22,3 +22,9 @@ export interface User {
   achievements: string[];
   stats: any;
 }
+
+export interface QuestionNotebook {
+  id: string;
+  name: string | null;
+  question_ids: string[] | null;
+}
