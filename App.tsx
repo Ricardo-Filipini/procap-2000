@@ -1,34 +1,49 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './services/supabaseClient';
-import { Question } from './types';
+import { Question, User } from './types';
 import QuestionCard from './components/QuestionCard';
 import LoadingSpinner from './components/LoadingSpinner';
-import { SunIcon, MoonIcon } from './components/Icons';
+import Login from './components/Login';
+import Sidebar from './components/Sidebar';
+import Leaderboard from './components/Leaderboard';
+import { MenuIcon } from './components/Icons';
 
 const App: React.FC = () => {
+  const [user, setUser] = useState<User | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const [currentView, setCurrentView] = useState('study'); // study, leaderboard
+
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
-  const [theme, setTheme] = useState(localStorage.getItem('color-theme') || 'light');
-
+  
+  // Restore session
   useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('color-theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('color-theme', 'light');
+    const savedUser = localStorage.getItem('procap_user');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
     }
-  }, [theme]);
+    setSessionLoaded(true);
+  }, []);
 
-  const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+  const handleLogin = (loggedInUser: User) => {
+    localStorage.setItem('procap_user', JSON.stringify(loggedInUser));
+    setUser(loggedInUser);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('procap_user');
+    setUser(null);
+    setCurrentView('study');
   };
 
   const fetchQuestions = useCallback(async () => {
     setLoading(true);
+    setCompleted(false);
+    setCurrentIndex(0);
     setError(null);
     try {
       const { data, error } = await supabase
@@ -36,24 +51,43 @@ const App: React.FC = () => {
         .select('*')
         .limit(5);
       
-      if (error) {
-        throw error;
-      }
-      
-      if (data) {
-        setQuestions(data);
-      }
+      if (error) throw error;
+      if (data) setQuestions(data);
+
     } catch (err: any) {
       setError(err.message || 'Falha ao buscar questões.');
-      console.error(err);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchQuestions();
-  }, [fetchQuestions]);
+    if (user && currentView === 'study') {
+      fetchQuestions();
+    }
+  }, [user, currentView, fetchQuestions]);
+
+  const handleAnswer = async (questionId: string, isCorrect: boolean) => {
+    if (!user) return;
+
+    // We only care about the first try for the leaderboard
+    const { data: existingAnswer } = await supabase
+        .from('user_question_answers')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('question_id', questionId)
+        .eq('notebook_id', 'all_questions')
+        .single();
+    
+    if (existingAnswer) return; // Already answered
+
+    await supabase.from('user_question_answers').insert({
+      user_id: user.id,
+      question_id: questionId,
+      notebook_id: 'all_questions',
+      is_correct_first_try: isCorrect,
+    });
+  };
 
   const handleNextQuestion = () => {
     if (currentIndex < questions.length - 1) {
@@ -68,41 +102,17 @@ const App: React.FC = () => {
       setCurrentIndex(prevIndex => prevIndex - 1);
     }
   };
-  
-  const restartQuiz = () => {
-    setCurrentIndex(0);
-    setCompleted(false);
-    // Shuffle and refetch for a new set of questions, or just reshuffle existing
-    fetchQuestions(); 
-  }
 
-  const renderContent = () => {
-    if (loading) {
-      return <LoadingSpinner />;
-    }
-
-    if (error) {
-      return (
-        <div className="text-center text-red-500 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-8 rounded-2xl shadow-lg border border-red-200 dark:border-red-800">
-          <h2 className="text-2xl font-bold mb-4">Ocorreu um erro</h2>
-          <p>{error}</p>
-           <button 
-              onClick={fetchQuestions}
-              className="mt-6 px-6 py-2 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200"
-          >
-              Tentar Novamente
-          </button>
-        </div>
-      );
-    }
-    
+  const renderStudyContent = () => {
+    if (loading) return <LoadingSpinner />;
+    if (error) return <div className="text-center text-red-500">{error}</div>;
     if (completed) {
         return (
             <div className="text-center bg-white dark:bg-gray-800/50 backdrop-blur-sm p-10 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700">
                 <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-4">Parabéns!</h2>
                 <p className="text-lg text-gray-600 dark:text-gray-300 mb-8">Você completou este bloco de estudos.</p>
                 <button 
-                    onClick={restartQuiz}
+                    onClick={fetchQuestions}
                     className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200"
                 >
                     Começar um Novo Bloco
@@ -110,7 +120,6 @@ const App: React.FC = () => {
             </div>
         )
     }
-
     if (questions.length > 0) {
       return (
         <QuestionCard
@@ -119,38 +128,45 @@ const App: React.FC = () => {
           totalQuestions={questions.length}
           onNext={handleNextQuestion}
           onPrev={handlePreviousQuestion}
+          onAnswer={handleAnswer}
         />
       );
     }
-
-    return (
-      <div className="text-center text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800/50 p-10 rounded-2xl shadow-lg">
-        <h2 className="text-2xl font-bold mb-4">Nenhuma questão encontrada</h2>
-        <p>Não foi possível carregar as questões no momento.</p>
-      </div>
-    );
+    return <div className="text-center text-gray-500">Nenhuma questão encontrada.</div>;
   };
+  
+  if (!sessionLoaded) {
+    return <LoadingSpinner />;
+  }
+
+  if (!user) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   return (
-    <div className="min-h-screen flex flex-col p-4">
-      <header className="w-full max-w-5xl mx-auto flex justify-between items-center py-4">
-          <div className="text-2xl font-bold text-gray-800 dark:text-white">
-            Procap<span className="text-blue-500">200</span>
-          </div>
-          <button onClick={toggleTheme} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-            {theme === 'light' ? <MoonIcon className="h-6 w-6" /> : <SunIcon className="h-6 w-6" />}
-          </button>
-      </header>
-      <main className="flex-grow flex items-center justify-center">
-          <div className="w-full transition-opacity duration-300">
-             {renderContent()}
-          </div>
-      </main>
-      <footer className="w-full max-w-5xl mx-auto text-center py-4">
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-            Plataforma de estudos para o Curso de Formação do Banco Central.
-        </p>
-      </footer>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 flex">
+      <Sidebar 
+        isOpen={isSidebarOpen} 
+        setIsOpen={setSidebarOpen} 
+        onLogout={handleLogout}
+        setCurrentView={setCurrentView}
+        currentView={currentView}
+        user={user}
+      />
+      <div className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-20'}`}>
+        <header className="flex items-center p-4 border-b border-gray-200 dark:border-gray-700">
+           <button onClick={() => setSidebarOpen(!isSidebarOpen)} className="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">
+              <MenuIcon className="h-6 w-6" />
+           </button>
+           <h1 className="ml-4 text-xl font-semibold">
+              {currentView === 'study' ? 'Estudo: Todas as Questões' : 'Leaderboard Geral'}
+           </h1>
+        </header>
+        <main className="flex-grow p-4 sm:p-6 md:p-8 flex items-center justify-center">
+          {currentView === 'study' && renderStudyContent()}
+          {currentView === 'leaderboard' && <Leaderboard />}
+        </main>
+      </div>
     </div>
   );
 };

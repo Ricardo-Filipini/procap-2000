@@ -8,6 +8,7 @@ interface QuestionCardProps {
   totalQuestions: number;
   onNext: () => void;
   onPrev: () => void;
+  onAnswer: (questionId: string, isCorrect: boolean) => void;
 }
 
 const difficultyColorMap = {
@@ -16,18 +17,30 @@ const difficultyColorMap = {
   'Difícil': 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
 };
 
-const QuestionCard: React.FC<QuestionCardProps> = ({ question, questionNumber, totalQuestions, onNext, onPrev }) => {
+const QuestionCard: React.FC<QuestionCardProps> = ({ question, questionNumber, totalQuestions, onNext, onPrev, onAnswer }) => {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
+  const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
 
   useEffect(() => {
     setSelectedOption(null);
     setIsAnswered(false);
+    setIsCorrect(null);
   }, [question]);
 
   const handleOptionClick = (option: string) => {
     if (!isAnswered) {
       setSelectedOption(option);
+    }
+  };
+
+  const handleConfirm = () => {
+    if (!selectedOption) return;
+    const correct = selectedOption === question.correct_answer;
+    setIsCorrect(correct);
+    setIsAnswered(true);
+    if(question.id){
+        onAnswer(question.id, correct);
     }
   };
 
@@ -38,8 +51,8 @@ const QuestionCard: React.FC<QuestionCardProps> = ({ question, questionNumber, t
         : 'bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/60';
     }
 
-    const isCorrect = option === question.correct_answer;
-    if (isCorrect) {
+    const isCorrectOption = option === question.correct_answer;
+    if (isCorrectOption) {
       return 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200 ring-2 ring-green-500';
     }
 
@@ -104,7 +117,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({ question, questionNumber, t
         {!isAnswered ? (
           <div className="w-full flex justify-end">
             <button
-              onClick={() => setIsAnswered(true)}
+              onClick={handleConfirm}
               disabled={!selectedOption}
               className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed dark:disabled:bg-gray-500 transition-all duration-200 flex items-center group"
             >

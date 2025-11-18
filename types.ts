@@ -12,3 +12,13 @@ export interface Question {
   hot_votes: number;
   cold_votes: number;
 }
+
+export interface User {
+  id: string;
+  pseudonym: string;
+  created_at: string;
+  level: number;
+  xp: number;
+  achievements: string[];
+  stats: any;
+}
