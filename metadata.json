@@ -1,0 +1,5 @@
+{
+  "name": "Procap-2000",
+  "description": "An application for candidates of the Banco Central do Brasil to prepare for the Curso de Formação (Procap) by answering questions from a Supabase database.",
+  "requestFramePermissions": []
+}
